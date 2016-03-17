@@ -1,0 +1,101 @@
+diff -Nur salt.orig/rnd.py salt/rnd.py
+--- a/salt/rnd.py	1970-01-01 03:00:00.000000000 +0300
++++ b/salt/rnd.py	2014-06-26 16:34:49.225740481 +0400
+@@ -0,0 +1,73 @@
++# -*- coding: utf-8 -*-
++
++class IPData(object):
++    def __str__(self):
++        return self.cidr
++
++    def __init__(self, cidr):
++        cidr = str(cidr)
++        binary_ip = 0
++
++        # convert to binary
++        try:
++            ip, prefix = cidr.split('/')
++        except ValueError:
++            prefix = "32"
++            ip = cidr
++            cidr = "%s/%s" % (ip, prefix)
++
++        octets = ip.split('.')
++        assert len(octets) == 4
++
++        for octet in octets:
++            octet = int(octet)
++            assert octet >= 0 and octet <= 255
++            binary_ip = (binary_ip << 8) + octet
++
++        binary_prefix = int(prefix)
++        assert binary_prefix >= 0 and binary_prefix <= 32
++
++        self.cidr = cidr
++        self.binary_ip = binary_ip
++        self.binary_mask = (0xffffffff >> (32-binary_prefix)) << (32-binary_prefix)
++        self.binary_prefix = binary_prefix
++
++    @staticmethod
++    def ip_to_str(ip):
++        return "%s.%s.%s.%s" % (ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255)
++
++    @property
++    def ip(self):
++        return self.ip_to_str(self.binary_ip)
++
++    @property
++    def network(self):
++        network = self.binary_ip & self.binary_mask
++        return self.ip_to_str(network)
++
++    @property
++    def netmask(self):
++        return self.ip_to_str(self.binary_mask)
++        
++    @property
++    def bcast(self):
++        network = self.binary_ip & self.binary_mask
++        bcastbits = 0xffffffff ^ self.binary_mask
++        return self.ip_to_str(network | bcastbits)
++
++    @property
++    def prefix(self):
++        return str(self.binary_prefix)
++
++
++def network_filter(prop, cidr):
++    return getattr(IPData(cidr), prop)
++
++if __name__ == '__main__':
++    # test properties
++    from functools import partial
++
++    for cidr in ['0.0.0.0/0', '127.127.32.32/32', '10.1.2.3', '10.76.16.6/28', '10.76.128.6/23']:
++        for prop in ['ip', 'network', 'netmask', 'cidr', 'bcast', 'prefix']:
++            print cidr, ':', prop, '::', partial(network_filter, prop)(cidr)
++            
+diff -Nur salt.orig/utils/templates.py salt/utils/templates.py
+--- a/salt/utils/templates.py	2013-11-14 20:45:12.000000000 +0400
++++ b/salt/utils/templates.py	2014-06-26 16:07:57.095672079 +0400
+@@ -24,6 +24,10 @@
+ from salt.utils.jinja import SerializerExtension as JinjaSerializerExtension
+ from salt import __path__ as saltpath
+ 
++# Import addtional functions for filters
++import salt.rnd
++from functools import partial
++
+ log = logging.getLogger(__name__)
+ 
+ 
+@@ -142,6 +146,9 @@
+                                        **env_args)
+ 
+     jinja_env.filters['strftime'] = salt.utils.date_format
++    # add filters
++    for filter_name in ['ip', 'network', 'netmask', 'bcast', 'prefix']:
++        jinja_env.filters[filter_name] = partial(salt.rnd.network_filter, filter_name)
+ 
+     unicode_context = {}
+     for key, value in context.iteritems():
